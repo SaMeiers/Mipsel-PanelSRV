@@ -13,14 +13,15 @@ jobs:
         if: ${{ secrets.PANELSRV_TOKEN != '' }}
         run: sed -i 's/change/${{ secrets.PANELSRV_TOKEN }}/g' panelsrv.c
 
-      - name: Descargar toolchain mipsel-linux-musl
+      - name: Descargar y extraer toolchain mipsel-linux-musl
         run: |
+          cd /tmp
           wget -q https://musl.cc/mipsel-linux-musl-cross.tgz
           tar xzf mipsel-linux-musl-cross.tgz
 
       - name: Compilar estático para mipsel
         run: |
-          export PATH="${{ github.workspace }}/mipsel-linux-musl-cross/bin:$PATH"
+          export PATH="/tmp/mipsel-linux-musl-cross/bin:$PATH"
           mipsel-linux-musl-gcc -static -O2 -o panelsrv panelsrv.c
           file panelsrv
 
