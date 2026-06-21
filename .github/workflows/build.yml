@@ -27,8 +27,6 @@ jobs:
 
       - name: Compilar estático para mipsel
         run: |
-          # zig cc es un reemplazo directo de gcc que no necesita descargar nada
-          # target: mipsel-linux-musl define la arquitectura y el estándar de librería
           zig cc -target mipsel-linux-musl -static -O2 -o panelsrv panelsrv.c
           file panelsrv
 
