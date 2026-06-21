@@ -11,24 +11,25 @@ jobs:
       - name: Checkout código
         uses: actions/checkout@v4
 
+      - name: Instalar Zig
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.13.0
+
       - name: Reemplazar TOKEN desde secreto
-        
         env:
           PANELSRV_TOKEN: ${{ secrets.PANELSRV_TOKEN }}
-        
-        if: env.PANELSRV_TOKEN != ''
-        
-        run: sed -i "s/change/$PANELSRV_TOKEN/g" panelsrv.c
-
-      - name: Descargar toolchain mipsel-linux-musl
         run: |
-          curl -L --retry 3 -o mipsel-linux-musl-cross.tgz https://musl.cc/mipsel-linux-musl-cross.tgz
-          tar xzf mipsel-linux-musl-cross.tgz
+          if [ -n "$PANELSRV_TOKEN" ]; then
+            echo "Reemplazando token en el código..."
+            sed -i "s/change/$PANELSRV_TOKEN/g" panelsrv.c
+          fi
 
       - name: Compilar estático para mipsel
         run: |
-          export PATH="${{ github.workspace }}/mipsel-linux-musl-cross/bin:$PATH"
-          mipsel-linux-musl-gcc -static -O2 -o panelsrv panelsrv.c
+          # zig cc es un reemplazo directo de gcc que no necesita descargar nada
+          # target: mipsel-linux-musl define la arquitectura y el estándar de librería
+          zig cc -target mipsel-linux-musl -static -O2 -o panelsrv panelsrv.c
           file panelsrv
 
       - name: Subir binario como artefacto
