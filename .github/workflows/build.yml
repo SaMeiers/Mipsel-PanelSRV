@@ -1,6 +1,8 @@
 name: Compilar panelsrv para mipsel
 
-on: [push]
+on:
+  push:
+  workflow_dispatch:
 
 jobs:
   build:
@@ -10,18 +12,22 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Reemplazar TOKEN desde secreto
-        if: ${{ secrets.PANELSRV_TOKEN != '' }}
-        run: sed -i 's/change/${{ secrets.PANELSRV_TOKEN }}/g' panelsrv.c
+        
+        env:
+          PANELSRV_TOKEN: ${{ secrets.PANELSRV_TOKEN }}
+        
+        if: env.PANELSRV_TOKEN != ''
+        
+        run: sed -i "s/change/$PANELSRV_TOKEN/g" panelsrv.c
 
-      - name: Descargar y extraer toolchain mipsel-linux-musl
+      - name: Descargar toolchain mipsel-linux-musl
         run: |
-          cd /tmp
           wget -q https://musl.cc/mipsel-linux-musl-cross.tgz
           tar xzf mipsel-linux-musl-cross.tgz
 
       - name: Compilar estático para mipsel
         run: |
-          export PATH="/tmp/mipsel-linux-musl-cross/bin:$PATH"
+          export PATH="${{ github.workspace }}/mipsel-linux-musl-cross/bin:$PATH"
           mipsel-linux-musl-gcc -static -O2 -o panelsrv panelsrv.c
           file panelsrv
 
