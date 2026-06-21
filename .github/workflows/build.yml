@@ -22,7 +22,7 @@ jobs:
 
       - name: Descargar toolchain mipsel-linux-musl
         run: |
-          wget -q https://musl.cc/mipsel-linux-musl-cross.tgz
+          curl -L --retry 3 -o mipsel-linux-musl-cross.tgz https://musl.cc/mipsel-linux-musl-cross.tgz
           tar xzf mipsel-linux-musl-cross.tgz
 
       - name: Compilar estático para mipsel
