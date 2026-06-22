@@ -1,4 +1,4 @@
-name: Compilar panelsrv para mipsel
+name: Compilar binarios para mipsel
 
 on:
   push:
@@ -16,22 +16,33 @@ jobs:
         with:
           version: 0.13.0
 
-      - name: Reemplazar TOKEN desde secreto
+      - name: Reemplazar TOKEN desde secreto en panelsrv
         env:
           PANELSRV_TOKEN: ${{ secrets.PANELSRV_TOKEN }}
         run: |
           if [ -n "$PANELSRV_TOKEN" ]; then
-            echo "Reemplazando token en el código..."
+            echo "Reemplazando token en panelsrv.c..."
             sed -i "s/change/$PANELSRV_TOKEN/g" panelsrv.c
           fi
 
-      - name: Compilar estático para mipsel
+      - name: Compilar panelsrv
         run: |
           zig cc -target mipsel-linux-musl -static -O2 -o panelsrv panelsrv.c
           file panelsrv
 
-      - name: Subir binario como artefacto
+      - name: Compilar wctl
+        run: |
+          zig cc -target mipsel-linux-musl -static -O2 -o wctl wctl.c
+          file wctl
+
+      - name: Subir panelsrv como artefacto
         uses: actions/upload-artifact@v4
         with:
           name: panelsrv-mipsel
           path: panelsrv
+
+      - name: Subir wctl como artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: wctl-mipsel
+          path: wctl
