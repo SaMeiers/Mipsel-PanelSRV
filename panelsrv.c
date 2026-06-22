@@ -19,21 +19,24 @@
 #define TOKEN         "change"
 #define TOOLS_DIR     "/tmp/tools"
 #define JOBS_DIR      "/tmp/jobs"
-#define MAX_REQUEST   (4*1024*1024)
+#define SCRIPT_PATH   "/tmp/scripts/attack.sh"
+#define BOA_PORT      80
+#define MAX_REQUEST   (8*1024*1024)
 #define BACKLOG       8
 
 static const char *PANEL_HTML =
 "<!DOCTYPE html><html><head><meta charset='utf-8'>"
 "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-"<title>Extensor Panel</title><style>"
+"<title>Extensor CTF Panel</title><style>"
 "body{background:#0d1117;color:#c9d1d9;font-family:monospace;margin:0;padding:16px}"
 "h2{color:#58a6ff;border-bottom:1px solid #30363d;padding-bottom:6px}"
-"input,select,button{background:#161b22;color:#c9d1d9;border:1px solid #30363d;"
+"input,select,button,textarea{background:#161b22;color:#c9d1d9;border:1px solid #30363d;"
 "padding:8px;border-radius:6px;font-family:monospace;width:100%;box-sizing:border-box;margin:4px 0}"
 "button{cursor:pointer;background:#238636;border:none}"
 "button:active{background:#2ea043}"
 "pre{background:#161b22;border:1px solid #30363d;border-radius:6px;padding:10px;"
 "min-height:140px;max-height:320px;overflow:auto;white-space:pre-wrap;word-break:break-all}"
+"textarea{min-height:260px;white-space:pre;overflow:auto}"
 "section{margin-bottom:24px}.row{display:flex;gap:8px}.row>*{flex:1}"
 "</style></head><body>"
 "<h2>Consola</h2><section>"
@@ -41,7 +44,11 @@ static const char *PANEL_HTML =
 "<button onclick='runCmd()'>Ejecutar</button>"
 "<pre id='out'>(sin output)</pre></section>"
 "<h2>WiFi / Ataques</h2><section>"
-"<button onclick=\"runRaw('/tmp/scripts/attack.sh scan')\">Escanear redes</button>"
+"<div class='row'>"
+"<select id='scanIface'><option value='wlan0'>wlan0</option>"
+"<option value='wlan1'>wlan1</option><option value='wlan0-vxd'>wlan0-vxd</option></select>"
+"<button onclick='scanWifi()'>Escanear (via boa local)</button>"
+"</div>"
 "<input id='bssid' placeholder='BSSID objetivo (copialo del scan de arriba)'>"
 "<input id='chan' placeholder='Canal (ej: 6)'>"
 "<div class='row'>"
@@ -52,6 +59,13 @@ static const char *PANEL_HTML =
 "<input type='file' id='file'>"
 "<button onclick='upload()'>Subir a /tmp/tools</button>"
 "<pre id='upout'>(nada subido)</pre></section>"
+"<h2>Editar attack.sh</h2><section>"
+"<textarea id='scriptbox' spellcheck='false'>(cargando...)</textarea>"
+"<div class='row'>"
+"<button onclick='loadScript()'>Recargar</button>"
+"<button onclick='saveScript()'>Guardar</button>"
+"</div>"
+"<pre id='scriptmsg'></pre></section>"
 "<script>"
 "const TOKEN='" TOKEN "';let poll=null;"
 "function showOut(id){clearInterval(poll);"
@@ -62,6 +76,10 @@ static const char *PANEL_HTML =
 "headers:{'Content-Type':'application/x-www-form-urlencoded'},"
 "body:'cmd='+encodeURIComponent(cmd)}).then(r=>r.text()).then(id=>showOut(id.trim()));}"
 "function runCmd(){runRaw(document.getElementById('cmd').value);}"
+"function scanWifi(){const ifc=document.getElementById('scanIface').value;"
+"document.getElementById('out').textContent='escaneando via boa local...';"
+"fetch('/scan?token='+TOKEN+'&iface='+ifc).then(r=>r.text()).then(t=>{"
+"document.getElementById('out').textContent=t;});}"
 "function attack(mode){const b=document.getElementById('bssid').value;"
 "const c=document.getElementById('chan').value;"
 "if(!b){alert('Pon el BSSID objetivo primero');return;}"
@@ -71,6 +89,14 @@ static const char *PANEL_HTML =
 "const fd=new FormData();fd.append('file',f,f.name);"
 "fetch('/upload?token='+TOKEN,{method:'POST',body:fd}).then(r=>r.text()).then(t=>{"
 "document.getElementById('upout').textContent=t;});}"
+"function loadScript(){fetch('/script?token='+TOKEN).then(r=>r.text()).then(t=>{"
+"document.getElementById('scriptbox').value=t;});}"
+"function saveScript(){const c=document.getElementById('scriptbox').value;"
+"fetch('/script?token='+TOKEN,{method:'POST',"
+"headers:{'Content-Type':'application/x-www-form-urlencoded'},"
+"body:'content='+encodeURIComponent(c)}).then(r=>r.text()).then(t=>{"
+"document.getElementById('scriptmsg').textContent=t;});}"
+"window.onload=loadScript;"
 "</script></body></html>";
 
 static void send_response(int fd, const char *status, const char *ctype,
@@ -156,6 +182,108 @@ static int check_token(const char *query) {
 
 static int valid_id_char(char c) {
     return isalnum((unsigned char)c) || c == '_' || c == '-';
+}
+
+static const char *http_local(const char *method, const char *path, const char *body) {
+    static char respbuf[131072];
+    int s = socket(AF_INET, SOCK_STREAM, 0);
+    if (s < 0) return "(error creando socket)";
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(BOA_PORT);
+    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+    if (connect(s, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        close(s);
+        return "(no se pudo conectar a boa en 127.0.0.1:80)";
+    }
+
+    char req[8192];
+    int blen = body ? (int)strlen(body) : 0;
+    int reqlen;
+    if (strcmp(method, "POST") == 0) {
+        reqlen = snprintf(req, sizeof(req),
+            "POST %s HTTP/1.0\r\nHost: 127.0.0.1\r\n"
+            "Content-Type: application/x-www-form-urlencoded\r\n"
+            "Content-Length: %d\r\nConnection: close\r\n\r\n%s",
+            path, blen, body ? body : "");
+    } else {
+        reqlen = snprintf(req, sizeof(req),
+            "GET %s HTTP/1.0\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n", path);
+    }
+    if (reqlen < 0 || (size_t)reqlen >= sizeof(req)) { close(s); return "(request demasiado largo)"; }
+
+    ssize_t off = 0;
+    while (off < reqlen) {
+        ssize_t w = write(s, req + off, reqlen - off);
+        if (w <= 0) { close(s); return "(error escribiendo al socket de boa)"; }
+        off += w;
+    }
+
+    size_t total = 0;
+    ssize_t n;
+    while (total < sizeof(respbuf) - 1) {
+        n = read(s, respbuf + total, sizeof(respbuf) - 1 - total);
+        if (n <= 0) break;
+        total += (size_t)n;
+    }
+    respbuf[total] = '\0';
+    close(s);
+
+    char *bodyp = strstr(respbuf, "\r\n\r\n");
+    return bodyp ? bodyp + 4 : respbuf;
+}
+
+static void handle_scan(int fd, const char *query) {
+    if (!check_token(query)) { send_text(fd, "403 Forbidden", "token invalido"); return; }
+
+    char iface[16];
+    if (!get_param(query, "iface", iface, sizeof(iface)) || iface[0] == '\0')
+        strcpy(iface, "wlan0");
+
+    char postbody[256];
+    snprintf(postbody, sizeof(postbody),
+             "refresh=Site+Survey&submit-url=%%2Fpocket_sitesurvey.htm&ifname=%s", iface);
+
+    const char *result = http_local("POST", "/boafrm/formWlSiteSurvey", postbody);
+    send_text(fd, "200 OK", result);
+}
+
+static void handle_script_get(int fd, const char *query) {
+    if (!check_token(query)) { send_text(fd, "403 Forbidden", "token invalido"); return; }
+
+    static char buf[131072];
+    FILE *f = fopen(SCRIPT_PATH, "rb");
+    if (!f) { send_text(fd, "200 OK", "(attack.sh aun no existe en " SCRIPT_PATH ")"); return; }
+    size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+    fclose(f);
+    buf[n] = '\0';
+    send_text(fd, "200 OK", buf);
+}
+
+static void handle_script_post(int fd, const char *query, char *body, size_t blen) {
+    if (!check_token(query)) { send_text(fd, "403 Forbidden", "token invalido"); return; }
+
+    static char tmp[200000];
+    if (blen >= sizeof(tmp)) blen = sizeof(tmp) - 1;
+    memcpy(tmp, body, blen);
+    tmp[blen] = '\0';
+
+    char *eq = strstr(tmp, "content=");
+    if (!eq) { send_text(fd, "400 Bad Request", "falta content"); return; }
+    eq += strlen("content=");
+    url_decode(eq);
+
+    mkdir("/tmp/scripts", 0755);
+    FILE *f = fopen(SCRIPT_PATH, "wb");
+    if (!f) { send_text(fd, "500 Internal Server Error", "no se pudo escribir"); return; }
+    fwrite(eq, 1, strlen(eq), f);
+    fclose(f);
+    chmod(SCRIPT_PATH, 0755);
+
+    send_text(fd, "200 OK", "guardado");
 }
 
 static void handle_run(int fd, const char *query, char *body, size_t blen) {
@@ -392,6 +520,12 @@ int main(void) {
             send_response(cfd, "200 OK", "text/html", PANEL_HTML, strlen(PANEL_HTML));
         } else if (strcmp(method, "GET") == 0 && strcmp(path, "/output") == 0) {
             handle_output(cfd, query);
+        } else if (strcmp(method, "GET") == 0 && strcmp(path, "/scan") == 0) {
+            handle_scan(cfd, query);
+        } else if (strcmp(method, "GET") == 0 && strcmp(path, "/script") == 0) {
+            handle_script_get(cfd, query);
+        } else if (strcmp(method, "POST") == 0 && strcmp(path, "/script") == 0) {
+            handle_script_post(cfd, query, body, body_have);
         } else if (strcmp(method, "POST") == 0 && strcmp(path, "/run") == 0) {
             handle_run(cfd, query, body, body_have);
         } else if (strcmp(method, "POST") == 0 && strcmp(path, "/upload") == 0) {
